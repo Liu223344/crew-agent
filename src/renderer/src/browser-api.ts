@@ -32,8 +32,9 @@ let snapshot: AppSnapshot = {
     provider('kimi', 'Kimi', 'openai-compatible', 'https://api.moonshot.cn/v1', false),
     provider('deepseek', 'DeepSeek', 'openai-compatible', 'https://api.deepseek.com', true)
   ],
+  mcpServers: [],
   runs: [],
-  settings: { language: 'zh-CN', theme: 'light', currency: 'CNY' }
+  settings: { language: 'zh-CN', theme: 'light', currency: 'CNY', pricing: [], approvalPolicy: 'risky' }
 }
 
 const listeners = new Set<(value: AppSnapshot) => void>()
@@ -49,11 +50,22 @@ export function createBrowserApi(): BossyApi {
       return update({ ...snapshot, teams: [team, ...snapshot.teams] })
     },
     saveProvider: async (input: SaveProviderInput) => update({ ...snapshot, providers: [{ ...input, hasSecret: Boolean(input.apiKey), status: input.apiKey ? 'ready' : input.status, updatedAt: new Date().toISOString() }, ...snapshot.providers.filter((item) => item.id !== input.id)] }),
+    testProvider: async (providerId: string) => {
+      const current = snapshot.providers.find((item) => item.id === providerId)
+      const models = current?.models.length ? current.models : [`${providerId}-default`, `${providerId}-fast`]
+      if (current) update({ ...snapshot, providers: snapshot.providers.map((item) => item.id === providerId ? { ...item, status: 'ready', models } : item) })
+      return { providerId, ok: true, models, latencyMs: 86, capabilities: current?.capabilities ?? { streaming: true, toolCalling: true, structuredOutput: false, vision: false }, message: `连接成功，发现 ${models.length} 个模型` }
+    },
+    saveMcpServer: async (server) => update({ ...snapshot, mcpServers: [{ ...server, hasSecret: Boolean(server.authToken), updatedAt: new Date().toISOString() }, ...snapshot.mcpServers.filter((item) => item.id !== server.id)] }),
+    testMcpServer: async (serverId) => ({ serverId, ok: true, tools: [], message: '连接成功，发现 0 个工具' }),
+    deleteMcpServer: async (serverId) => update({ ...snapshot, mcpServers: snapshot.mcpServers.filter((item) => item.id !== serverId) }),
+    exportTeam: async () => '/Users/liu/Desktop/team.bossy-team.json',
+    importTeam: async () => clone(snapshot),
     createRun: async (input: CreateRunInput) => {
       const team = snapshot.teams.find((item) => item.id === input.teamId)!
       const first = crypto.randomUUID()
       const workerTasks = team.agents.filter((agent) => agent.id !== team.chiefAgentId).map((agent) => ({ id: crypto.randomUUID(), title: `${agent.name}：完成专业分工`, objective: agent.instructions, assigneeId: agent.id, dependencies: [first], expectedOutput: agent.outputContract, acceptanceCriteria: '成果完整并可交接', status: 'queued' as const, progress: 0 }))
-      const run: ExecutionRun = { schemaVersion: 1, id: crypto.randomUUID(), teamId: team.id, title: input.objective.slice(0, 42), objective: input.objective, workspacePath: input.workspacePath, status: 'awaiting_approval', concurrency: input.concurrency, budget: input.budget, usedTokens: 0, estimatedCost: 0, planVersion: 1, tasks: [{ id: first, title: '明确目标与验收标准', objective: '整理任务范围和最终交付标准。', assigneeId: team.chiefAgentId, dependencies: [], expectedOutput: '任务简报', acceptanceCriteria: '目标清晰可执行', status: 'queued', progress: 0 }, ...workerTasks, { id: crypto.randomUUID(), title: '汇总、检查并交付', objective: '检查所有成员成果并生成最终交付。', assigneeId: team.chiefAgentId, dependencies: workerTasks.map((task) => task.id), expectedOutput: '最终交付包', acceptanceCriteria: '所有验收项通过', status: 'queued', progress: 0 }], events: [{ id: crypto.randomUUID(), runId: '', type: 'plan', agentId: team.chiefAgentId, title: '执行计划已生成', detail: '等待老板批准后开始执行。', createdAt: new Date().toISOString() }], createdAt: now, updatedAt: now }
+      const run: ExecutionRun = { schemaVersion: 1, id: crypto.randomUUID(), teamId: team.id, title: input.objective.slice(0, 42), objective: input.objective, workspacePath: input.workspacePath, status: 'awaiting_approval', concurrency: input.concurrency, budget: input.budget, usedTokens: 0, estimatedCost: 0, planVersion: 1, tasks: [{ id: first, title: '明确目标与验收标准', objective: '整理任务范围和最终交付标准。', assigneeId: team.chiefAgentId, dependencies: [], expectedOutput: '任务简报', acceptanceCriteria: '目标清晰可执行', status: 'queued', progress: 0 }, ...workerTasks, { id: crypto.randomUUID(), title: '汇总、检查并交付', objective: '检查所有成员成果并生成最终交付。', assigneeId: team.chiefAgentId, dependencies: workerTasks.map((task) => task.id), expectedOutput: '最终交付包', acceptanceCriteria: '所有验收项通过', status: 'queued', progress: 0 }], events: [{ id: crypto.randomUUID(), runId: '', type: 'plan', agentId: team.chiefAgentId, title: '执行计划已生成', detail: '等待老板批准后开始执行。', createdAt: new Date().toISOString() }], approvals: [], agentCosts: {}, messages: [], attachments: [], artifacts: [], createdAt: now, updatedAt: now }
       run.events[0].runId = run.id
       update({ ...snapshot, runs: [run, ...snapshot.runs] })
       return clone(run)
@@ -63,7 +75,13 @@ export function createBrowserApi(): BossyApi {
       simulate(runId)
     },
     setRunStatus: async (runId, status) => mutateRun(runId, (run) => { run.status = status }),
+    resolveApproval: async (runId, approvalId, decision) => mutateRun(runId, (run) => { const approval = run.approvals.find((item) => item.id === approvalId); if (approval) approval.status = decision }),
+    sendRunMessage: async (runId, agentId, content) => mutateRun(runId, (run) => { run.messages.push({ id: crypto.randomUUID(), runId, agentId, content, status: 'pending', createdAt: new Date().toISOString() }) }),
+    updateRunTask: async (runId, taskId, patch) => mutateRun(runId, (run) => { const task = run.tasks.find((item) => item.id === taskId); if (task) Object.assign(task, patch, { status: 'queued', progress: 0 }); run.planVersion += 1 }),
     openDirectory: async () => '/Users/liu/Desktop/Bossy Workspace',
+    openAttachments: async () => ['/Users/liu/Desktop/brief.pdf'],
+    exportData: async () => '/Users/liu/Desktop/bossy-backup.json',
+    importData: async () => clone(snapshot),
     saveSettings: async (settings) => update({ ...snapshot, settings }),
     onSnapshot: (listener) => { listeners.add(listener); return () => listeners.delete(listener) }
   }

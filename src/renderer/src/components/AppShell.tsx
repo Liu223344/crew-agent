@@ -2,16 +2,18 @@ import type { PropsWithChildren } from 'react'
 import { Bot, Boxes, ChevronDown, CircleDollarSign, LayoutDashboard, Network, Settings2 } from 'lucide-react'
 import clsx from 'clsx'
 import { useAppStore, type AppPage } from '../store'
+import { useLocale } from '../i18n'
 
-const navItems: Array<{ id: AppPage; label: string; icon: typeof LayoutDashboard }> = [
-  { id: 'dashboard', label: '工作台', icon: LayoutDashboard },
-  { id: 'team', label: '团队树', icon: Network },
-  { id: 'runs', label: '任务驾驶舱', icon: Boxes },
-  { id: 'providers', label: '模型与设置', icon: Settings2 }
+const navItems: Array<{ id: AppPage; zh: string; en: string; icon: typeof LayoutDashboard }> = [
+  { id: 'dashboard', zh: '工作台', en: 'Workspace', icon: LayoutDashboard },
+  { id: 'team', zh: '团队树', en: 'Team tree', icon: Network },
+  { id: 'runs', zh: '任务驾驶舱', en: 'Mission control', icon: Boxes },
+  { id: 'providers', zh: '模型与设置', en: 'Models & settings', icon: Settings2 }
 ]
 
 export function AppShell({ children }: PropsWithChildren): React.JSX.Element {
   const { page, setPage, snapshot, selectedTeamId, selectTeam } = useAppStore()
+  const { t } = useLocale()
   const activeRuns = snapshot?.runs.filter((run) => run.status === 'running').length ?? 0
   const spend = snapshot?.runs.reduce((sum, run) => sum + run.estimatedCost, 0) ?? 0
 
@@ -27,7 +29,7 @@ export function AppShell({ children }: PropsWithChildren): React.JSX.Element {
           </div>
         </div>
 
-        <nav className="primary-nav" aria-label="主导航">
+        <nav className="primary-nav" aria-label={t('主导航', 'Primary navigation')}>
           {navItems.map((item) => {
             const Icon = item.icon
             return (
@@ -37,7 +39,7 @@ export function AppShell({ children }: PropsWithChildren): React.JSX.Element {
                 onClick={() => setPage(item.id)}
               >
                 <Icon size={17} />
-                <span>{item.label}</span>
+                <span>{t(item.zh, item.en)}</span>
                 {item.id === 'runs' && activeRuns > 0 && <b>{activeRuns}</b>}
               </button>
             )
@@ -45,7 +47,7 @@ export function AppShell({ children }: PropsWithChildren): React.JSX.Element {
         </nav>
 
         <div className="sidebar-section">
-          <span className="section-label">当前团队</span>
+          <span className="section-label">{t('当前团队', 'CURRENT TEAM')}</span>
           <label className="team-select">
             <Bot size={16} />
             <select value={selectedTeamId ?? ''} onChange={(event) => selectTeam(event.target.value)}>
@@ -62,12 +64,12 @@ export function AppShell({ children }: PropsWithChildren): React.JSX.Element {
         <div className="sidebar-foot">
           <div className="sidebar-stat">
             <CircleDollarSign size={16} />
-            <span>累计估算</span>
-            <strong>¥{spend.toFixed(2)}</strong>
+            <span>{t('累计估算', 'Estimated total')}</span>
+            <strong>{snapshot?.settings.currency === 'CNY' ? '¥' : '$'}{spend.toFixed(2)}</strong>
           </div>
           <div className="local-badge">
             <span />
-            本地工作区
+            {t('本地工作区', 'Local workspace')}
           </div>
         </div>
       </aside>
@@ -75,4 +77,3 @@ export function AppShell({ children }: PropsWithChildren): React.JSX.Element {
     </div>
   )
 }
-

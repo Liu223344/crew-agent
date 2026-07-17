@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { PlanTask, TeamDefinition } from '../shared/contracts'
-import { createExecutionPlan, groupTasksByDependency } from './planning'
+import { createExecutionPlan, groupTasksByDependency, parseExecutionPlan } from './planning'
 
 const team: TeamDefinition = {
   schemaVersion: 1,
@@ -59,5 +59,21 @@ describe('planning', () => {
     ]
     expect(() => groupTasksByDependency(cyclic)).toThrow(/cycle/)
   })
-})
 
+  it('validates and converts a manager JSON plan into internal task ids', () => {
+    const tasks = parseExecutionPlan(JSON.stringify({ tasks: [
+      { key: 'research', title: 'Research', objective: 'Find facts', assigneeId: 'worker', dependencies: [], expectedOutput: 'Notes', acceptanceCriteria: 'Cited' },
+      { key: 'review', title: 'Review', objective: 'Review notes', assigneeId: 'chief', dependencies: ['research'], expectedOutput: 'Final', acceptanceCriteria: 'Approved' }
+    ] }), team)
+    expect(tasks).toHaveLength(2)
+    expect(tasks[1].dependencies).toEqual([tasks[0].id])
+    expect(tasks[0].status).toBe('queued')
+  })
+
+  it('rejects unknown assignees and dependencies from manager output', () => {
+    const unknownAgent = JSON.stringify({ tasks: [{ key: 'one', title: 'One', objective: 'Do it', assigneeId: 'outsider', dependencies: [], expectedOutput: 'File', acceptanceCriteria: 'Done' }] })
+    expect(() => parseExecutionPlan(unknownAgent, team)).toThrow(/团队外 Agent/)
+    const unknownDependency = JSON.stringify({ tasks: [{ key: 'one', title: 'One', objective: 'Do it', assigneeId: 'chief', dependencies: ['missing'], expectedOutput: 'File', acceptanceCriteria: 'Done' }] })
+    expect(() => parseExecutionPlan(unknownDependency, team)).toThrow(/未知依赖/)
+  })
+})

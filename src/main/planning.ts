@@ -1,5 +1,101 @@
 import { randomUUID } from 'node:crypto'
-import type { PlanTask, TeamDefinition } from '../shared/contracts'
+import { z } from 'zod'
+import type { AttachmentRecord, PlanTask, TeamDefinition } from '../shared/contracts'
+
+const planDraftSchema = z.object({
+  tasks: z.array(z.object({
+    key: z.string().min(1).max(80),
+    title: z.string().min(1).max(120),
+    objective: z.string().min(1),
+    assigneeId: z.string().min(1),
+    dependencies: z.array(z.string()),
+    expectedOutput: z.string().min(1),
+    acceptanceCriteria: z.string().min(1)
+  })).min(1).max(30)
+})
+
+export const executionPlanJsonSchema: Record<string, unknown> = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['tasks'],
+  properties: {
+    tasks: {
+      type: 'array',
+      minItems: 1,
+      maxItems: 30,
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        required: ['key', 'title', 'objective', 'assigneeId', 'dependencies', 'expectedOutput', 'acceptanceCriteria'],
+        properties: {
+          key: { type: 'string' },
+          title: { type: 'string' },
+          objective: { type: 'string' },
+          assigneeId: { type: 'string' },
+          dependencies: { type: 'array', items: { type: 'string' } },
+          expectedOutput: { type: 'string' },
+          acceptanceCriteria: { type: 'string' }
+        }
+      }
+    }
+  }
+}
+
+export function planningPrompt(team: TeamDefinition, objective: string, workspacePath: string, attachments: AttachmentRecord[] = []): string {
+  const roster = team.agents.map((agent) => ({
+    id: agent.id,
+    name: agent.name,
+    role: agent.role,
+    title: agent.title,
+    responsibilities: agent.instructions,
+    outputContract: agent.outputContract,
+    tools: agent.tools
+  }))
+  return [
+    '你是 Bossy 团队的总指挥。把老板的目标拆解为可以并行执行、可验证、能交接的任务 DAG。',
+    '只能把任务分配给名单内已有 Agent，assigneeId 必须逐字使用名单中的 id。',
+    'dependencies 使用任务 key，不得引用未知任务或形成循环。',
+    '计划应包含必要的前置分析、成员专业工作，以及由总指挥负责的最终汇总和验收。',
+    '不要假设未授权的工具或目录；每个任务写清预期产物与验收标准。',
+    `老板目标：${objective}`,
+    `工作目录：${workspacePath || '未选择，仅允许输出文本计划'}`,
+    `输入附件：${JSON.stringify(attachments.map((attachment) => ({ name: attachment.name, path: attachment.path, type: attachment.type, size: attachment.size })))}`,
+    `并发上限：${team.concurrency}`,
+    `团队名单：${JSON.stringify(roster)}`,
+    '只输出符合指定 JSON Schema 的对象。'
+  ].join('\n\n')
+}
+
+export function parseExecutionPlan(text: string, team: TeamDefinition): PlanTask[] {
+  const parsed = planDraftSchema.parse(JSON.parse(extractJson(text)))
+  const keys = new Set<string>()
+  for (const task of parsed.tasks) {
+    if (keys.has(task.key)) throw new Error(`执行计划包含重复任务 key: ${task.key}`)
+    keys.add(task.key)
+  }
+  const agents = new Set(team.agents.map((agent) => agent.id))
+  for (const task of parsed.tasks) {
+    if (!agents.has(task.assigneeId)) throw new Error(`执行计划引用了团队外 Agent: ${task.assigneeId}`)
+    for (const dependency of task.dependencies) {
+      if (!keys.has(dependency)) throw new Error(`任务 ${task.key} 引用了未知依赖 ${dependency}`)
+      if (dependency === task.key) throw new Error(`任务 ${task.key} 不能依赖自身`)
+    }
+  }
+  const ids = new Map(parsed.tasks.map((task) => [task.key, randomUUID()]))
+  const tasks: PlanTask[] = parsed.tasks.map((task) => ({
+    id: ids.get(task.key)!,
+    title: task.title,
+    objective: task.objective,
+    assigneeId: task.assigneeId,
+    dependencies: task.dependencies.map((dependency) => ids.get(dependency)!),
+    expectedOutput: task.expectedOutput,
+    acceptanceCriteria: task.acceptanceCriteria,
+    status: 'queued',
+    progress: 0
+  }))
+  groupTasksByDependency(tasks)
+  return tasks
+}
 
 export function createExecutionPlan(team: TeamDefinition): PlanTask[] {
   const chief = team.agents.find((agent) => agent.id === team.chiefAgentId) ?? team.agents[0]
@@ -77,3 +173,13 @@ export function groupTasksByDependency(tasks: PlanTask[]): string[][] {
   return groups
 }
 
+function extractJson(text: string): string {
+  const trimmed = text.trim()
+  if (trimmed.startsWith('{') && trimmed.endsWith('}')) return trimmed
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i)?.[1]?.trim()
+  if (fenced) return fenced
+  const start = trimmed.indexOf('{')
+  const end = trimmed.lastIndexOf('}')
+  if (start >= 0 && end > start) return trimmed.slice(start, end + 1)
+  throw new Error('总指挥没有返回可解析的 JSON 计划')
+}

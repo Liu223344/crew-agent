@@ -6,9 +6,11 @@ import { ProviderSettings } from './pages/ProviderSettings'
 import { RunCockpit } from './pages/RunCockpit'
 import { TeamStudio } from './pages/TeamStudio'
 import { useAppStore } from './store'
+import { useLocale } from './i18n'
 
 export default function App(): React.JSX.Element {
   const { initialize, loading, page, snapshot } = useAppStore()
+  const { t } = useLocale()
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined
@@ -31,7 +33,7 @@ export default function App(): React.JSX.Element {
       <div className="app-loading">
         <div className="brand-mark">B</div>
         <LoaderCircle className="spin" size={18} />
-        <span>正在启动 Bossy</span>
+        <span>{t('正在启动 Bossy', 'Starting Bossy')}</span>
       </div>
     )
   }
@@ -45,4 +47,3 @@ export default function App(): React.JSX.Element {
     </AppShell>
   )
 }
-

@@ -5,14 +5,18 @@
   "main": "./out/main/index.js",
   "author": "Liu223344",
   "license": "MIT",
+  "packageManager": "pnpm@11.9.0",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "pnpm typecheck && electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:e2e": "playwright test e2e",
+    "test:watch": "vitest",
+    "dist:mac": "pnpm build && electron-builder --mac --publish never"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
     "@xyflow/react": "^12.11.2",
     "better-sqlite3": "^12.11.1",
     "clsx": "^2.1.1",
@@ -24,6 +28,7 @@
     "zustand": "^5.0.8"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@types/better-sqlite3": "^7.6.13",
     "@types/dagre": "^0.7.52",
     "@types/node": "^22.18.0",
@@ -31,6 +36,7 @@
     "@types/react-dom": "^19.2.0",
     "@vitejs/plugin-react": "^5.0.0",
     "electron": "^43.1.1",
+    "electron-builder": "26.15.3",
     "electron-vite": "^5.0.0",
     "node-gyp": "^13.0.1",
     "typescript": "^5.9.3",
@@ -49,10 +55,15 @@
     ],
     "mac": {
       "category": "public.app-category.productivity",
+      "identity": null,
       "target": [
         "dmg",
         "zip"
       ]
+    },
+    "dmg": {
+      "title": "Bossy ${version}",
+      "artifactName": "Bossy-${version}-${arch}.${ext}"
     }
   }
 }

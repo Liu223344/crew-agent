@@ -5,8 +5,12 @@ import type {
   AppSnapshot,
   CreateRunInput,
   ExecutionRun,
+  McpProbeResult,
+  ProviderProbeResult,
+  SaveMcpServerInput,
   SaveProviderInput,
-  TeamDefinition
+  TeamDefinition,
+  UpdateRunTaskInput
 } from '@shared/contracts'
 
 export type AppPage = 'dashboard' | 'team' | 'runs' | 'providers'
@@ -27,9 +31,20 @@ interface AppStore {
   createTeam: () => Promise<void>
   deleteTeam: (teamId: string) => Promise<void>
   saveProvider: (provider: SaveProviderInput) => Promise<void>
+  testProvider: (providerId: string) => Promise<ProviderProbeResult>
+  saveMcpServer: (server: SaveMcpServerInput) => Promise<void>
+  testMcpServer: (serverId: string) => Promise<McpProbeResult>
+  deleteMcpServer: (serverId: string) => Promise<void>
+  exportTeam: (teamId: string) => Promise<string | null>
+  importTeam: () => Promise<void>
+  exportData: () => Promise<string | null>
+  importData: () => Promise<void>
   createRun: (input: CreateRunInput) => Promise<ExecutionRun>
   approveRun: (runId: string) => Promise<void>
   setRunStatus: (runId: string, status: 'paused' | 'running' | 'cancelled') => Promise<void>
+  resolveApproval: (runId: string, approvalId: string, decision: 'approved' | 'rejected') => Promise<void>
+  sendRunMessage: (runId: string, agentId: string, content: string) => Promise<void>
+  updateRunTask: (runId: string, taskId: string, patch: UpdateRunTaskInput) => Promise<void>
   saveSettings: (settings: AppSettings) => Promise<void>
   addAgent: (team: TeamDefinition, agent: AgentDefinition) => Promise<void>
 }
@@ -79,6 +94,28 @@ export const useAppStore = create<AppStore>((set, get) => ({
     set({ snapshot, selectedTeamId: snapshot.teams[0]?.id ?? null, selectedAgentId: null })
   },
   saveProvider: async (provider) => set({ snapshot: await window.bossy.saveProvider(provider) }),
+  testProvider: async (providerId) => {
+    const result = await window.bossy.testProvider(providerId)
+    set({ snapshot: await window.bossy.getSnapshot() })
+    return result
+  },
+  saveMcpServer: async (server) => set({ snapshot: await window.bossy.saveMcpServer(server) }),
+  testMcpServer: async (serverId) => {
+    const result = await window.bossy.testMcpServer(serverId)
+    set({ snapshot: await window.bossy.getSnapshot() })
+    return result
+  },
+  deleteMcpServer: async (serverId) => set({ snapshot: await window.bossy.deleteMcpServer(serverId) }),
+  exportTeam: (teamId) => window.bossy.exportTeam(teamId),
+  importTeam: async () => {
+    const snapshot = await window.bossy.importTeam()
+    if (snapshot) set({ snapshot, selectedTeamId: snapshot.teams[0]?.id ?? null, page: 'team' })
+  },
+  exportData: () => window.bossy.exportData(),
+  importData: async () => {
+    const snapshot = await window.bossy.importData()
+    if (snapshot) set({ snapshot })
+  },
   createRun: async (input) => {
     const run = await window.bossy.createRun(input)
     set({ snapshot: await window.bossy.getSnapshot(), selectedRunId: run.id, page: 'runs' })
@@ -92,10 +129,21 @@ export const useAppStore = create<AppStore>((set, get) => ({
     await window.bossy.setRunStatus(runId, status)
     set({ snapshot: await window.bossy.getSnapshot() })
   },
+  resolveApproval: async (runId, approvalId, decision) => {
+    await window.bossy.resolveApproval(runId, approvalId, decision)
+    set({ snapshot: await window.bossy.getSnapshot() })
+  },
+  sendRunMessage: async (runId, agentId, content) => {
+    await window.bossy.sendRunMessage(runId, agentId, content)
+    set({ snapshot: await window.bossy.getSnapshot() })
+  },
+  updateRunTask: async (runId, taskId, patch) => {
+    await window.bossy.updateRunTask(runId, taskId, patch)
+    set({ snapshot: await window.bossy.getSnapshot() })
+  },
   saveSettings: async (settings) => set({ snapshot: await window.bossy.saveSettings(settings) }),
   addAgent: async (team, agent) => {
     await get().saveTeam({ ...team, agents: [...team.agents, agent] })
     set({ selectedAgentId: agent.id })
   }
 }))
-
