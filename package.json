@@ -1,0 +1,58 @@
+{
+  "name": "bossy-desktop",
+  "version": "0.1.0",
+  "description": "Bossy - a local-first visual AI team workspace",
+  "main": "./out/main/index.js",
+  "author": "Liu223344",
+  "license": "MIT",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "pnpm typecheck && electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@xyflow/react": "^12.11.2",
+    "better-sqlite3": "^12.11.1",
+    "clsx": "^2.1.1",
+    "dagre": "^0.8.5",
+    "lucide-react": "^0.468.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.4.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/dagre": "^0.7.52",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "electron": "^43.1.1",
+    "electron-vite": "^5.0.0",
+    "node-gyp": "^13.0.1",
+    "typescript": "^5.9.3",
+    "vite": "^7.0.2",
+    "vitest": "^3.2.4"
+  },
+  "build": {
+    "appId": "ai.bossy.desktop",
+    "productName": "Bossy",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    }
+  }
+}
