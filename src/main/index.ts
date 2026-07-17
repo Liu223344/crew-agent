@@ -1,4 +1,5 @@
 import { join } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import type { AppSettings, CreateRunInput, SaveMcpServerInput, SaveProviderInput, TeamDefinition, UpdateRunTaskInput } from '../shared/contracts'
@@ -13,6 +14,7 @@ let database: BossyDatabase
 let runEngine: RunEngine
 let providerService: ProviderService
 let mcpService: McpService
+const planningControllers = new Map<string, AbortController>()
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -133,8 +135,16 @@ function registerIpc(): void {
   ipcMain.handle('run:create', async (_event, input: CreateRunInput) => {
     const team = database.snapshot().teams.find((item) => item.id === input.teamId)
     if (!team) throw new Error('Team not found')
-    return runEngine.create(input, team)
+    const requestId = input.requestId ?? randomUUID()
+    const controller = new AbortController()
+    planningControllers.set(requestId, controller)
+    try {
+      return await runEngine.create(input, team, controller.signal)
+    } finally {
+      planningControllers.delete(requestId)
+    }
   })
+  ipcMain.handle('run:planning:cancel', (_event, requestId: string) => planningControllers.get(requestId)?.abort())
   ipcMain.handle('run:approve', (_event, runId: string) => runEngine.approve(runId))
   ipcMain.handle('run:status', (_event, runId: string, status: 'paused' | 'running' | 'cancelled') =>
     runEngine.setStatus(runId, status)

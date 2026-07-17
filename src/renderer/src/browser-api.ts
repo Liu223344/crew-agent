@@ -70,6 +70,7 @@ export function createBrowserApi(): BossyApi {
       update({ ...snapshot, runs: [run, ...snapshot.runs] })
       return clone(run)
     },
+    cancelPlanning: async () => undefined,
     approveRun: async (runId) => {
       mutateRun(runId, (run) => { run.status = 'running' })
       simulate(runId)

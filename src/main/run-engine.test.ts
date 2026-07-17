@@ -7,6 +7,21 @@ import type { ProviderService } from './providers/provider-service'
 import { RunEngine } from './run-engine'
 
 describe('RunEngine orchestration', () => {
+  it('asks the chief to correct an invalid plan once', async () => {
+    const team = makeTeam(false)
+    let planningCalls = 0
+    const providers = providerFake(async (_providerId, request) => {
+      if (!request.responseSchema) return result('done', request.model)
+      planningCalls += 1
+      return result(planningCalls === 1 ? '{"message":"not a plan"}' : planFor(team, false), request.model)
+    })
+    const database = memoryDatabase(team)
+    const engine = new RunEngine(database, providers, mcpFake(), () => null)
+    const run = await engine.create({ teamId: team.id, objective: 'repair plan', workspacePath: '/tmp', concurrency: 1 }, team)
+    expect(run.tasks).toHaveLength(1)
+    expect(planningCalls).toBe(2)
+  })
+
   it('runs independent tasks in parallel up to the configured concurrency', async () => {
     const team = makeTeam(false)
     let active = 0

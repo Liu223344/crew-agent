@@ -224,6 +224,7 @@ export interface AppSnapshot {
 }
 
 export interface CreateRunInput {
+  requestId?: string
   teamId: string
   objective: string
   workspacePath: string
@@ -311,6 +312,7 @@ export interface BossyApi {
   exportTeam(teamId: string): Promise<string | null>
   importTeam(): Promise<AppSnapshot | null>
   createRun(input: CreateRunInput): Promise<ExecutionRun>
+  cancelPlanning(requestId: string): Promise<void>
   approveRun(runId: string): Promise<void>
   setRunStatus(runId: string, status: 'paused' | 'running' | 'cancelled'): Promise<void>
   resolveApproval(runId: string, approvalId: string, decision: 'approved' | 'rejected'): Promise<void>

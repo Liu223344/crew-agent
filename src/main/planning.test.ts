@@ -70,6 +70,11 @@ describe('planning', () => {
     expect(tasks[0].status).toBe('queued')
   })
 
+  it('accepts common plan wrappers from compatible model providers', () => {
+    const wrapped = JSON.stringify({ plan: { tasks: [{ key: 'one', title: 'One', objective: 'Do it', assigneeId: 'chief', dependencies: [], expectedOutput: 'File', acceptanceCriteria: 'Done' }] } })
+    expect(parseExecutionPlan(wrapped, team)).toHaveLength(1)
+  })
+
   it('rejects unknown assignees and dependencies from manager output', () => {
     const unknownAgent = JSON.stringify({ tasks: [{ key: 'one', title: 'One', objective: 'Do it', assigneeId: 'outsider', dependencies: [], expectedOutput: 'File', acceptanceCriteria: 'Done' }] })
     expect(() => parseExecutionPlan(unknownAgent, team)).toThrow(/团队外 Agent/)

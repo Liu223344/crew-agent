@@ -69,27 +69,33 @@ export async function readSse(response: Response, onEvent: (event: Record<string
     buffer += decoder.decode(value, { stream: !done })
     const blocks = buffer.split(/\r?\n\r?\n/)
     buffer = blocks.pop() ?? ''
-    for (const block of blocks) parseSseBlock(block, onEvent)
+    for (const block of blocks) {
+      if (parseSseBlock(block, onEvent)) {
+        await reader.cancel()
+        return
+      }
+    }
     if (done) break
   }
   if (buffer.trim()) parseSseBlock(buffer, onEvent)
 }
 
-function parseSseBlock(block: string, onEvent: (event: Record<string, unknown>) => void): void {
+function parseSseBlock(block: string, onEvent: (event: Record<string, unknown>) => void): boolean {
   const data = block
     .split(/\r?\n/)
     .filter((line) => line.startsWith('data:'))
     .map((line) => line.slice(5).trimStart())
     .join('\n')
-  if (!data || data === '[DONE]') return
+  if (!data) return false
+  if (data === '[DONE]') return true
   try {
     onEvent(JSON.parse(data) as Record<string, unknown>)
   } catch {
     throw new ProviderRequestError('Provider returned malformed streaming data')
   }
+  return false
 }
 
 export function emptyUsage(): ProviderUsage {
   return { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
 }
-

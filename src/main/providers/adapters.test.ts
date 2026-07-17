@@ -1,8 +1,21 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ProviderConnection } from '../../shared/contracts'
 import { createProviderAdapter } from './adapters'
+import { readSse } from './provider-adapter'
 
 describe('provider adapters', () => {
+  it('stops immediately at the SSE done marker even if the server keeps the connection open', async () => {
+    const encoder = new TextEncoder()
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"type":"delta"}\n\ndata: [DONE]\n\n'))
+      }
+    }))
+    const events: Array<Record<string, unknown>> = []
+    await readSse(response, (event) => events.push(event))
+    expect(events).toEqual([{ type: 'delta' }])
+  })
+
   it('discovers models and parses OpenAI Responses streaming output', async () => {
     const fetcher = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
       const url = String(input)
@@ -103,4 +116,3 @@ function sse(events: Array<Record<string, unknown>>): Response {
     headers: { 'Content-Type': 'text/event-stream' }
   })
 }
-

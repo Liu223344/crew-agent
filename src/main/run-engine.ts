@@ -5,6 +5,7 @@ import type {
   AgentDefinition,
   CreateRunInput,
   ExecutionRun,
+  PlanTask,
   ProviderMessage,
   ProviderGenerateRequest,
   ProviderGenerateResult,
@@ -42,25 +43,62 @@ export class RunEngine {
     this.tools = new ToolService(mcp)
   }
 
-  async create(input: CreateRunInput, team: TeamDefinition): Promise<ExecutionRun> {
+  async create(input: CreateRunInput, team: TeamDefinition, cancellation?: AbortSignal): Promise<ExecutionRun> {
     const chief = team.agents.find((agent) => agent.id === team.chiefAgentId)
     if (!chief) throw new Error('团队没有有效的总指挥')
     this.assertAgentModel(chief)
     const attachments = await prepareAttachments(input.attachmentPaths ?? [], input.workspacePath)
-    const generated = await this.generateForAgent(chief, {
-      model: chief.model.modelId,
-      messages: [
-        { role: 'system', content: chief.instructions },
-        { role: 'user', content: planningPrompt(team, input.objective, input.workspacePath, attachments) }
-      ],
-      temperature: chief.model.temperature,
-      maxOutputTokens: 8192,
-      responseSchema: { name: 'execution_plan', schema: executionPlanJsonSchema }
-    })
-    const tasks = parseExecutionPlan(generated.text, team)
+    const planMessages: ProviderMessage[] = [
+      { role: 'system', content: chief.instructions },
+      { role: 'user', content: planningPrompt(team, input.objective, input.workspacePath, attachments) }
+    ]
+    let generated: AgentGeneration
+    try {
+      generated = await this.generateForAgent(chief, {
+        model: chief.model.modelId,
+        messages: planMessages,
+        temperature: chief.model.temperature,
+        maxOutputTokens: 8192,
+        responseSchema: { name: 'execution_plan', schema: executionPlanJsonSchema }
+      }, cancellation, undefined, 60_000)
+    } catch (error) {
+      throw new Error(planningError(error, chief.name), { cause: error })
+    }
+    const planningUsage = { ...generated.usage }
+    let planningCost = this.estimateCost(generated.providerId, generated.model, generated.usage)
+    let usedPlanningFallback = generated.usedFallback
+    let tasks: PlanTask[]
+    try {
+      tasks = parseExecutionPlan(generated.text, team)
+    } catch (firstError) {
+      try {
+        const corrected = await this.generateForAgent(chief, {
+          model: chief.model.modelId,
+          messages: [
+            ...planMessages,
+            { role: 'assistant', content: generated.text },
+            {
+              role: 'user',
+              content: `上一个输出未通过计划校验：${validationSummary(firstError)}。请纠正格式，只返回顶层包含 tasks 数组的 JSON 对象，字段必须是 key、title、objective、assigneeId、dependencies、expectedOutput、acceptanceCriteria。`
+            }
+          ],
+          temperature: Math.min(chief.model.temperature, 0.3),
+          maxOutputTokens: 8192,
+          responseSchema: { name: 'execution_plan', schema: executionPlanJsonSchema }
+        }, cancellation, undefined, 60_000)
+        planningUsage.inputTokens += corrected.usage.inputTokens
+        planningUsage.outputTokens += corrected.usage.outputTokens
+        planningUsage.totalTokens += corrected.usage.totalTokens
+        planningCost += this.estimateCost(corrected.providerId, corrected.model, corrected.usage)
+        usedPlanningFallback ||= corrected.usedFallback
+        generated = corrected
+        tasks = parseExecutionPlan(corrected.text, team)
+      } catch (secondError) {
+        throw new Error(`${chief.name} 返回的计划格式无效，自动纠正后仍未通过校验：${validationSummary(secondError)}`, { cause: secondError })
+      }
+    }
     const now = new Date().toISOString()
     const runId = randomUUID()
-    const planningCost = this.estimateCost(generated.providerId, generated.model, generated.usage)
     const run: ExecutionRun = {
       schemaVersion: 1,
       id: runId,
@@ -71,7 +109,7 @@ export class RunEngine {
       status: 'awaiting_approval',
       concurrency: Math.max(1, Math.min(input.concurrency, team.concurrency, 8)),
       budget: input.budget,
-      usedTokens: generated.usage.totalTokens,
+      usedTokens: planningUsage.totalTokens,
       estimatedCost: planningCost,
       planVersion: 1,
       tasks,
@@ -82,7 +120,7 @@ export class RunEngine {
           type: 'plan',
           agentId: chief.id,
           title: '执行计划已生成',
-          detail: `总指挥使用 ${generated.model}${generated.usedFallback ? '（备用模型）' : ''} 将目标拆解为 ${tasks.length} 个任务，等待老板批准。`,
+          detail: `总指挥使用 ${generated.model}${usedPlanningFallback ? '（备用模型）' : ''} 将目标拆解为 ${tasks.length} 个任务，等待老板批准。`,
           createdAt: now
         },
         {
@@ -91,7 +129,7 @@ export class RunEngine {
           type: 'usage',
           agentId: chief.id,
           title: '规划用量',
-          detail: `${generated.usage.inputTokens} 输入 + ${generated.usage.outputTokens} 输出 tokens`,
+          detail: `${planningUsage.inputTokens} 输入 + ${planningUsage.outputTokens} 输出 tokens`,
           createdAt: now
         }
       ],
@@ -431,11 +469,12 @@ export class RunEngine {
     agent: AgentDefinition,
     request: ProviderGenerateRequest,
     cancellation?: AbortSignal,
-    onTextDelta?: (delta: string) => void
+    onTextDelta?: (delta: string) => void,
+    timeoutMs = 120_000
   ): Promise<AgentGeneration> {
     const primary = async (): Promise<AgentGeneration> => ({
       ...(await this.providers.generate(agent.model.connectionId, request, {
-        signal: requestSignal(cancellation),
+        signal: requestSignal(cancellation, timeoutMs),
         onTextDelta
       })),
       providerId: agent.model.connectionId,
@@ -449,7 +488,7 @@ export class RunEngine {
         ...(await this.providers.generate(
           agent.model.fallbackConnectionId,
           { ...request, model: agent.model.fallbackModelId },
-          { signal: requestSignal(cancellation), onTextDelta }
+          { signal: requestSignal(cancellation, timeoutMs), onTextDelta }
         )),
         providerId: agent.model.fallbackConnectionId,
         usedFallback: true
@@ -543,8 +582,8 @@ export class RunEngine {
 
 class ApprovalPendingError extends Error {}
 
-function requestSignal(cancellation?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(120_000)
+function requestSignal(cancellation?: AbortSignal, timeoutMs = 120_000): AbortSignal {
+  const timeout = AbortSignal.timeout(timeoutMs)
   return cancellation ? AbortSignal.any([cancellation, timeout]) : timeout
 }
 
@@ -564,4 +603,24 @@ function taskKey(runId: string, taskId: string): string {
 function summarize(value: string): string {
   const normalized = value.trim().replace(/\s+/g, ' ')
   return normalized.length > 600 ? `${normalized.slice(0, 600)}...` : normalized
+}
+
+function planningError(error: unknown, chiefName: string): string {
+  if (error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')) {
+    return `${chiefName} 的模型在 60 秒内没有完成规划。请测试模型连接、换用更快的模型，或稍后重试。`
+  }
+  const message = error instanceof Error ? error.message : '未知错误'
+  return `${chiefName} 无法生成执行计划：${message}`
+}
+
+function validationSummary(error: unknown): string {
+  if (error instanceof Error) {
+    try {
+      const issues = JSON.parse(error.message) as Array<{ path?: Array<string | number>; message?: string }>
+      if (Array.isArray(issues)) return issues.slice(0, 3).map((issue) => `${issue.path?.join('.') || '计划'}: ${issue.message || '格式错误'}`).join('；')
+    } catch {
+      return error.message.slice(0, 300)
+    }
+  }
+  return '计划 JSON 格式错误'
 }

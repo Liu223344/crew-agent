@@ -14,6 +14,7 @@ const api: BossyApi = {
   exportTeam: (teamId: string) => ipcRenderer.invoke('team:export', teamId),
   importTeam: () => ipcRenderer.invoke('team:import'),
   createRun: (input: CreateRunInput) => ipcRenderer.invoke('run:create', input),
+  cancelPlanning: (requestId: string) => ipcRenderer.invoke('run:planning:cancel', requestId),
   approveRun: (runId: string) => ipcRenderer.invoke('run:approve', runId),
   setRunStatus: (runId: string, status: 'paused' | 'running' | 'cancelled') =>
     ipcRenderer.invoke('run:status', runId, status),

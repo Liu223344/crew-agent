@@ -138,6 +138,16 @@ function TaskComposer({ defaultTeamId, onClose, onCreate }: { defaultTeamId: str
   const [form, setForm] = useState<CreateRunInput>({ teamId: defaultTeamId, objective: '', workspacePath: '', concurrency: 3 })
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState('')
+  const [elapsed, setElapsed] = useState(0)
+  const [planningRequestId, setPlanningRequestId] = useState<string | null>(null)
+  useEffect(() => {
+    if (!submitting) {
+      setElapsed(0)
+      return
+    }
+    const timer = window.setInterval(() => setElapsed((value) => value + 1), 1000)
+    return () => window.clearInterval(timer)
+  }, [submitting])
   const chooseAttachments = async (): Promise<void> => {
     const paths = await window.bossy.openAttachments()
     if (paths.length) setForm((value) => ({ ...value, attachmentPaths: [...(value.attachmentPaths ?? []), ...paths].slice(0, 20) }))
@@ -148,21 +158,35 @@ function TaskComposer({ defaultTeamId, onClose, onCreate }: { defaultTeamId: str
   }
   const submit = async (): Promise<void> => {
     if (!form.objective.trim()) return
+    const requestId = crypto.randomUUID()
+    setPlanningRequestId(requestId)
     setSubmitting(true)
     setError('')
     try {
-      await onCreate(form)
+      await onCreate({ ...form, requestId })
       onClose()
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '总指挥暂时无法生成计划')
+      const message = (reason instanceof Error ? reason.message : '总指挥暂时无法生成计划')
+        .replace(/^Error invoking remote method 'run:create':\s*/, '')
+      if (!/abort|cancel/i.test(message)) setError(message)
     } finally {
       setSubmitting(false)
+      setPlanningRequestId(null)
     }
   }
+  const cancelAndClose = async (): Promise<void> => {
+    if (planningRequestId) await window.bossy.cancelPlanning(planningRequestId)
+    onClose()
+  }
+  const planningLabel = elapsed < 8
+    ? t('正在连接总指挥...', 'Connecting to the chief...')
+    : elapsed < 30
+      ? t(`正在等待模型... ${elapsed}s`, `Waiting for the model... ${elapsed}s`)
+      : t(`模型响应较慢... ${elapsed}s`, `The model is responding slowly... ${elapsed}s`)
   return (
-    <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
+    <div className="modal-backdrop" role="presentation" onMouseDown={() => void cancelAndClose()}>
       <section className="task-composer" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
-        <div className="composer-heading"><div><span className="section-label">NEW MISSION</span><h2>{t('给团队下达目标', 'Give your team a goal')}</h2><p>{t('总指挥会先生成计划，不会立即执行。', 'The chief creates a plan first and will not execute immediately.')}</p></div><button className="icon-button" onClick={onClose}>×</button></div>
+        <div className="composer-heading"><div><span className="section-label">NEW MISSION</span><h2>{t('给团队下达目标', 'Give your team a goal')}</h2><p>{t('总指挥会先生成计划，不会立即执行。', 'The chief creates a plan first and will not execute immediately.')}</p></div><button className="icon-button" onClick={() => void cancelAndClose()}>×</button></div>
         <label>{t('使用团队', 'Team')}<select value={form.teamId} onChange={(event) => setForm({ ...form, teamId: event.target.value })}>{snapshot!.teams.map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}</select></label>
         <label>{t('任务目标', 'Goal')}<textarea autoFocus rows={6} placeholder={t('例如：研究三款同类产品，整理差异，并在工作目录中生成一份完整的产品分析报告。', 'Example: Compare three competing products and create a complete analysis report in the workspace.')} value={form.objective} onChange={(event) => setForm({ ...form, objective: event.target.value })} /></label>
         <label>{t('工作目录', 'Workspace')}<div className="path-input"><input readOnly value={form.workspacePath} placeholder={t('选择 Agent 可以访问的文件夹', 'Choose the folder agents can access')} /><button className="icon-button" title={t('选择文件夹', 'Choose folder')} onClick={() => void chooseFolder()}><FolderOpen size={16} /></button></div></label>
@@ -170,7 +194,7 @@ function TaskComposer({ defaultTeamId, onClose, onCreate }: { defaultTeamId: str
         {(form.attachmentPaths ?? []).length > 0 && <div className="attachment-list">{form.attachmentPaths!.map((path) => <div key={path}><span>{path.split('/').at(-1)}</span><button title={t('移除', 'Remove')} onClick={() => setForm({ ...form, attachmentPaths: form.attachmentPaths?.filter((item) => item !== path) })}><X size={12} /></button></div>)}</div>}
         <div className="form-grid two"><label>{t('最大并发', 'Max concurrency')}<input type="number" min={1} max={8} value={form.concurrency} onChange={(event) => setForm({ ...form, concurrency: Number(event.target.value) })} /></label><label>{t('费用上限（可选）', 'Budget limit (optional)')}<input type="number" min={0} placeholder={snapshot!.settings.currency} onChange={(event) => setForm({ ...form, budget: event.target.value ? Number(event.target.value) : undefined })} /></label></div>
         {error && <div className="composer-error"><span>{error}</span></div>}
-        <div className="composer-actions"><button className="button secondary" onClick={onClose}>{t('取消', 'Cancel')}</button><button className="button primary" disabled={!form.objective.trim() || submitting} onClick={() => void submit()}><Zap size={16} />{submitting ? t('正在规划...', 'Planning...') : t('生成执行计划', 'Generate plan')}</button></div>
+        <div className="composer-actions"><button className="button secondary" onClick={() => void cancelAndClose()}>{submitting ? t('取消规划', 'Cancel planning') : t('取消', 'Cancel')}</button><button className="button primary" disabled={!form.objective.trim() || submitting} onClick={() => void submit()}><Zap size={16} />{submitting ? planningLabel : t('生成执行计划', 'Generate plan')}</button></div>
       </section>
     </div>
   )

@@ -62,12 +62,25 @@ export function planningPrompt(team: TeamDefinition, objective: string, workspac
     `输入附件：${JSON.stringify(attachments.map((attachment) => ({ name: attachment.name, path: attachment.path, type: attachment.type, size: attachment.size })))}`,
     `并发上限：${team.concurrency}`,
     `团队名单：${JSON.stringify(roster)}`,
-    '只输出符合指定 JSON Schema 的对象。'
+    '只输出 JSON 对象，不要使用 Markdown 代码块或添加解释。',
+    '必须严格使用以下结构：',
+    JSON.stringify({
+      tasks: [{
+        key: 'unique-task-key',
+        title: '任务标题',
+        objective: '具体目标',
+        assigneeId: '团队名单中的完整 Agent id',
+        dependencies: ['其他任务 key；没有依赖时为空数组'],
+        expectedOutput: '预期产物',
+        acceptanceCriteria: '可验证的验收标准'
+      }]
+    })
   ].join('\n\n')
 }
 
 export function parseExecutionPlan(text: string, team: TeamDefinition): PlanTask[] {
-  const parsed = planDraftSchema.parse(JSON.parse(extractJson(text)))
+  const value = JSON.parse(extractJson(text)) as unknown
+  const parsed = planDraftSchema.parse(normalizePlanShape(value))
   const keys = new Set<string>()
   for (const task of parsed.tasks) {
     if (keys.has(task.key)) throw new Error(`执行计划包含重复任务 key: ${task.key}`)
@@ -95,6 +108,19 @@ export function parseExecutionPlan(text: string, team: TeamDefinition): PlanTask
   }))
   groupTasksByDependency(tasks)
   return tasks
+}
+
+function normalizePlanShape(value: unknown): unknown {
+  if (Array.isArray(value)) return { tasks: value }
+  if (!value || typeof value !== 'object') return value
+  const object = value as Record<string, unknown>
+  if (Array.isArray(object.tasks)) return object
+  for (const key of ['plan', 'executionPlan', 'execution_plan', 'taskPlan', 'task_plan']) {
+    const nested = object[key]
+    if (Array.isArray(nested)) return { tasks: nested }
+    if (nested && typeof nested === 'object' && Array.isArray((nested as Record<string, unknown>).tasks)) return nested
+  }
+  return value
 }
 
 export function createExecutionPlan(team: TeamDefinition): PlanTask[] {
